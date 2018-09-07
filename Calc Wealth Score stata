@@ -1,0 +1,852 @@
+// Create and socio economic score using PCA
+// Factor weights obtained from DHS household dataset 2012
+// then applied to our data to create wealthscore for everyone in study population
+// Rowena Crow MD MSPH
+
+set more off
+***Close log file in case it is open
+capture log close
+
+*** Set path to your data  *** 
+global path "@@@@@@@@"
+***Create log file *** 
+log using "$path\Stata Code\logs\@.log", text replace 
+
+// get records for head of househouse only as wealth score will be same for everyone in household
+use "$path\data\SPSSConversion_merged.dta", clear
+tab b_gender
+
+by id_hh, sort: gen nvals = _n == 1 
+count if nvals 
+
+gen id_hh_from_idmember =substr(IDMember,11,2)
+sort b_relation
+sort id_hh_from_idmember
+
+tab b_relation
+label list b_relation
+/*
+b_relation:
+           1 householder
+           2 spouse
+           3 child
+           4 son/daughter-in-law
+           5 grandson
+           6 parent
+           7 parent in law
+           8 sibling
+           9 stepchild
+          10 uncle/aunt
+          11 niece
+          12 housemaid
+          13 other
+*/
+
+// just keep head of household records
+keep if id_hh_from_idmember=="01"
+duplicates list IDMember
+/*
+tab b_education
+
+       B-What is the higher educational |
+       background of the family member? |      Freq.     Percent        Cum.
+----------------------------------------+-----------------------------------
+                             Uneducated |         55        5.78        5.78
+                      elementary school |        181       19.03       24.82
+       graduated from elementary school |        493       51.84       76.66
+      graduated from junior high school |        108       11.36       88.01
+             graduated from high school |         85        8.94       96.95
+graduated from assosiate degree (DI/DII |          2        0.21       97.16
+ graduated with associate degree (DIII) |          3        0.32       97.48
+       graduated from bachelor`s degree |         21        2.21       99.68
+         graduated with doctoral degree |          1        0.11       99.79
+                                     99 |          2        0.21      100.00
+----------------------------------------+-----------------------------------
+                                  Total |        951      100.00
+
+b_education:
+           1 Uneducated
+           2 elementary school
+           3 graduated from elementary school //elementary schools usually have 6 grades with pupils aged between 6 and 12 years old,
+           4 graduated from junior high school
+           5 graduated from high school
+           6 graduated from assosiate degree (DI/DII)
+           7 graduated with associate degree (DIII)
+           8 graduated from bachelor`s degree
+           9 graduated from master`s degree
+          10 graduated with doctoral degree
+*/
+
+// collapse to DHS categories
+label list b_education
+
+gen hh_educ_preschool = 0
+replace hh_educ_preschool = 1 if b_education == 1 | b_education == 2 
+tab hh_educ_preschool
+count
+
+// five to twelve,
+gen hh_educ_primary = 0
+replace hh_educ_primary=1 if    b_education == 3
+tab hh_educ_primary
+gen hh_educ_secondary = 0
+replace hh_educ_secondary=1 if    b_education == 4 |  b_education == 5
+tab hh_educ_secondary
+gen hh_educ_higher = 0
+replace hh_educ_higher=1 if    b_education >5 & b_education <11
+tab hh_educ_higher
+save "$path\data\Household.dta" ,replace
+
+////////////////////////////////////////////////////////////////////////////////
+//load data set from DHS Indonesia 2007
+use "$path\data\IDHR63FL.DTA", clear
+// histogram hv271
+// get variables that can be matched to data collected in our Indonesia Survey
+// and create variables with meaningful names, recode 9s etc 
+
+// binary variables
+
+//household has separate room used as kitchen (hv242)
+tab hv242
+label list HV242
+
+gen kitchen_separate = hv242
+recode kitchen_separate (9=0)
+
+// Durable asset ownership yes/no  1/0   ////////////////////////////////////////////
+//3.1: Recode or restructure variables in preparation for the PCA
+//Binary variables
+
+// land line  (hv221)
+tab hv221
+gen landline = hv207
+recode landline (9=0)
+
+// cell phone (hv243a)
+tab hv243a
+gen cellphone = hv243a
+recode cellphone (9=0)
+
+// radio (hv207)
+tab hv207
+gen radio = hv207
+recode radio (9=0)
+
+// bicycle hv210
+tab hv210
+gen bicycle = hv210
+recode bicycle (9=0)
+
+//Car/Truck (Hv212)
+tab hv212
+gen car = hv212
+recode car (9=0)
+
+// Television (Hv208) color
+tab hv208
+gen television = hv208
+recode television (9=0)
+
+// motorcycle/scooter (hv211)
+tab hv211
+gen motorcycle = hv211
+recode motorcycle (9=0)
+
+// Refrigerator (Hv209)
+tab hv209
+gen refrigerator = hv209
+recode refrigerator (9=0)
+
+
+//categorical variables ///////////////////////////////////////////////////////////
+// education of head of household (hv106_01)
+tab hv106_01
+label list HV106_01
+
+/* DHS DATA  
+     0 "No education, preschool"
+     1 "Primary"  five to twelve,
+     2 "Secondary" 12 +
+     3 "Higher"
+     8 "Don't know"
+*/
+
+// head of household ed level  
+
+gen hh_educ_preschool = 0
+replace hh_educ_preschool = 1 if hv106_01 == 0
+
+gen hh_educ_primary = 0
+replace hh_educ_primary=1 if    hv106_01 == 1
+
+gen hh_educ_secondary = 0
+replace hh_educ_secondary=1 if    hv106_01 == 2
+
+gen hh_educ_higher = 0
+replace hh_educ_higher=1 if    hv106_01 == 3
+
+//Material Of Floor (Hv213)////////////////////////////////////////////////////
+tab hv213
+label list HV213
+/* DHS DATA options						matches to
+          10 natural   					no data in DHS
+          11 earth/sand					soil 
+          20 rudimentary				no data in DHS
+          21 wood/plank					wood
+          22 bamboo						no study data
+          30 finished					no data in DHS
+          31 parquet					no study data
+          32 ceramic/marble/granite		porcelain
+          33 tiles/terrazzo				porcelain
+          34 cement/brick				cement/rock?
+          96 other
+*/
+/* OUR DATA options
+Floor_code
+            soil |         88        3.54        3.54
+              wood |         20        0.81        4.35
+       cement/rock |        415       16.71       21.05
+         porcelain |      1,917       77.17       98.23
+carpet non plastic |          3        0.12       98.35
+    carpet plastic |         41        1.65      100.00
+	
+           1 soil
+           2 wood
+           3 cement/rock
+           4 porcelain
+           5 carpet non plastic
+           6 carpet plastic
+           7 mixed.....
+           8 other
+*/
+// create yes/no variables
+gen floor_soil = 0
+replace floor_soil = 1 if hv213 == 11
+
+gen floor_wood = 0
+replace floor_wood=1 if   hv213 == 21
+
+gen floor_cement = 0
+replace floor_cement=1 if   hv213 == 34
+
+gen floor_porcelain = 0
+replace floor_porcelain=1 if   hv213 == 32 | hv213 == 33 
+
+// Material Of Roof (Hv215) ////////////////////////////////////////////////////
+tab hv215
+label list HV215
+/* DHS DATA options					matches to
+    11 thatch / palm leaf/sod	no study data
+    21 wood/sirap				wood ribbed/ pywood
+    22 bamboo					bamboo
+    31 metal/zinc				Iron sheeting 
+    32 asbestos					asbes
+    33 tile						roof tiles
+    34 concrete					no study data
+    35 metal tiles			
+    96 other
+*/
+/* OUR DATA options
+I_Roof_code
+Iron sheeting |         17        0.68        0.68
+       pywood |         33        1.33        2.01
+        asbes |         44        1.77        3.79
+   roof tiles |      2,365       95.29       99.07
+  wood ribbed |         23        0.93      100.00
+
+           1 Iron sheeting
+           2 pywood
+           3 reed
+           4 asbes
+           5 roof tiles
+           6 wood ribbed
+           7 concrete
+           8 other
+
+*/
+// create yes/no variables
+//gen roof_bamboo = 0
+//replace roof_bamboo = 1 if hv215 == 22
+
+gen roof_wood = 0
+replace roof_wood=1 if   hv215 == 21
+
+gen roof_asbestos = 0
+replace roof_asbestos=1 if   hv215 == 32
+
+gen roof_tile = 0
+replace roof_tile=1 if   hv215 == 33
+
+gen roof_metal = 0
+replace roof_metal=1 if   hv215 == 31
+
+// Material Of Walls (Hv214)////////////////////////////////////////////////////
+tab hv214
+label list HV214
+/* DHS DATA options					matches to
+		  11 bamboo					bamboo
+          12 wood stem				wood
+          31 woven bamboo			bamboo
+          32 wood   				wood
+          33 brick				 cement/rock??
+          96 other
+*/
+/* OUR DATA options
+Wall_code
+
+             bamboo |        102        4.10        4.10
+               wood |        164        6.60       10.70
+        cement/rock |      2,219       89.30      100.00
+
+           1 bamboo
+           2 wood
+           3 cement/rock
+           4 mixed.............
+           5 other..............
+		
+*/
+gen walls_bamboo = 0
+replace walls_bamboo = 1 if hv214 == 11 | hv214 == 31
+
+gen walls_wood = 0
+replace walls_wood=1 if   hv214 == 12| hv214 == 32
+
+//gen walls_cement = 0
+//replace walls_other=1 if   hv215 == 33
+
+//  source of drinking water //////////////////////////////////////////////
+tab hv201
+label list HV201
+ /* DHS DATA options					matches to
+
+          11 piped into dwelling			state water company
+          12 piped to yard/plot				state water company
+          13 public tap/standpipe			state water company
+          33 open well in dwelling			ground water/well
+          34 open well in yard/polt			ground water/well
+          35 open public well				ground water/well
+          36 protected well in dwelling		ground water/well
+          37 protected well in yard/polt	ground water/well
+          38 protected public well			ground water/well
+          44 spring
+          45 river/stream					river
+          46 pond/lake						lake/pond
+          47 dam
+          51 rainwater						rain water
+          61 tanker truck					
+          71 bottled water					refillable water
+          81 refill water					refillable water
+          96 other
+I_SourceDrinkingWater_code
+--------------------+-----------------------------------
+state water company |        232        9.35        9.35
+  ground water/well |      1,682       67.82       77.18
+              river |         61        2.46       79.64
+          lake/pond |         24        0.97       80.60
+         rain water |         13        0.52       81.13
+   refillable water |        468       18.87      100.00
+label list I_SourceBathingWashing
+I_SourceBathingWashing:
+           1 state water company
+           2 ground water/well
+           3 river
+           4 lake/pond
+           5 rain water
+           6 refillable water
+           7 other......
+*/
+gen h2o_drinking_piped = 0
+replace h2o_drinking_piped = 1 if hv201 == 11 | hv201 == 12 | hv201 == 13
+
+gen h2o_drinking_well = 0
+replace h2o_drinking_well=1 if   hv201 == 33| hv201 == 34| hv201 == 35| hv201 == 36| hv201 == 37| hv201 == 38
+
+gen h2o_drinking_river = 0
+replace h2o_drinking_river=1 if   hv201 == 45
+
+gen h2o_drinking_lake = 0
+replace h2o_drinking_lake=1 if   hv201 == 46
+
+gen h2o_drinking_rain = 0
+replace h2o_drinking_rain=1 if   hv201 == 51
+
+gen h2o_drinking_refill = 0
+replace h2o_drinking_refill=1 if    hv201 == 71| hv201 == 81
+
+// cooking fuel 
+tab hv226
+label list HV226
+/*  DHS DATA options					matches to
+HV226:
+           1 electricity
+           2 lpg/natural gas				LPG 
+           3 natural gas
+           4 biogas
+           5 kerosene
+           6 coal, lignite
+           7 charcoal
+           8 wood							      Wood
+           9 straw/shrubs/grass
+          10 agricultural crop
+          11 animal dung
+          95 no food cooked in house
+          96 other
+
+ 
+I_Energy_cooking
+
+       Wood |      1,126       45.68       45.68
+        LPG |      1,339       54.32      100.00
+I_Energy_cooking:
+           1 Wood
+           2 Benzene
+           3 Kerosene
+           4 LPG
+           5 Coal
+           6 Electricity
+*/
+gen cooking_fuel_lpg = 0
+replace cooking_fuel_lpg = 1 if hv226 == 2 
+
+gen cooking_fuel_wood = 0
+replace cooking_fuel_wood=1 if   hv226 == 8
+
+//ownership status of the dwelling unit
+// not in DHS
+//tab sh30
+
+//Continuous variables
+//floor area of the house (meters squared) 
+sum sh114a
+gen house_area = sh114a
+//I_Totalareaofhouse
+
+
+
+/*Here should we should run the pca command with a list of all the required variables. If the dataset
+requires a weight to be applied, we can do so by adding [aweight = name_of_weight_variable] to the
+end of the command.* Add the ‘means’ option at the end, so Stata will also give us the mean and
+standard deviation of each variable.*/
+gen weight=hv005/100000
+pca   hh_educ_preschool hh_educ_primary hh_educ_secondary  hh_educ_higher landline cellphone radio bicycle car motorcycle refrigerator floor_soil floor_wood floor_cement floor_porcelain ///
+roof_wood roof_asbestos roof_metal roof_tile walls_bamboo walls_wood  h2o_drinking_piped h2o_drinking_well ///
+h2o_drinking_river h2o_drinking_lake h2o_drinking_rain h2o_drinking_refill  ///
+cooking_fuel_lpg  cooking_fuel_wood kitchen_separate  [aweight = weight], means
+
+//kitchen_separate
+//screeplot, yline(1) 
+predict wealthscore
+
+xtile quintile=wealthscore , nq(5)
+// get quintiles from DHS data
+summ wealthscore if quintile ==1
+summ wealthscore if quintile ==2
+summ wealthscore if quintile ==3
+summ wealthscore if quintile ==4
+summ wealthscore if quintile ==5
+
+//
+//histogram wealthscore
+
+//histogram quintile, discrete
+
+// should now have factor weights to create wealthscore for OUR data
+//use "$path\Datasets\CleanDataRSV.dta", clear
+use "$path\data\Household.dta", clear
+//
+// have already set up educ dummies
+tab hh_educ_preschool   
+tab hh_educ_primary   	  
+tab  hh_educ_secondary 	  
+tab  hh_educ_higher  
+
+// create same variables as used in PCA with yes/no 1/0
+generate landline =0
+replace landline = 1 if I_CableTelephone==1 
+tab landline
+
+generate cellphone =0
+replace cellphone = 1 if I_Handphone==1 
+tab cellphone
+
+generate radio =0
+replace radio = 1 if I_Radio==1 
+tab radio
+
+generate bicycle =0
+replace bicycle = 1 if I_Bike==1 
+tab bicycle
+
+generate car =0
+replace car = 1 if I_Car1985==1 |I_Car19861993==1 |I_Car1994==1 
+tab car
+
+generate motorcycle = 0
+replace motorcycle = 1 if I_Motorcycleunder100cc==1 |I_Motorcyclemorethan100cc==1 
+tab motorcycle
+
+generate refrigerator = 0
+replace refrigerator = 1 if I_Refrigerator==1 
+tab refrigerator
+
+/* floor type
+           1 soil
+           2 wood
+           3 cement/rock
+           4 porcelain
+           5 carpet non plastic
+           6 carpet plastic
+           7 mixed.....
+           8 other
+*/
+tab Floor_code
+
+gen floor_soil = 0
+replace floor_soil = 1 if Floor_code == 1
+
+gen floor_wood = 0
+replace floor_wood=1 if   Floor_code == 2
+
+gen floor_cement = 0 
+replace floor_cement=1 if   Floor_code == 3
+
+gen floor_porcelain = 0
+replace floor_porcelain=1 if   Floor_code == 4
+
+
+/* roof type
+           1 Iron sheeting
+           2 pywood
+           3 reed
+           4 asbes
+           5 roof tiles
+           6 wood ribbed
+           7 concrete
+           8 other
+*/
+tab I_Roof_code
+
+gen roof_wood = 0
+replace roof_wood=1 if   I_Roof_code == 2|I_Roof_code == 6
+
+gen roof_asbestos  = 0
+replace roof_asbestos=1 if   I_Roof_code == 4
+
+gen roof_tile = 0
+replace roof_tile=1 if   I_Roof_code == 5
+
+gen roof_metal = 0
+replace roof_metal = 1 if I_Roof_code == 1
+
+// wall type
+/*
+            1 bamboo
+            2 wood
+            3 cement/rock
+
+*/
+
+tab Wall_code
+
+gen walls_bamboo = 0
+replace walls_bamboo = 1 if Wall_code == 1
+
+gen walls_wood = 0
+replace walls_wood=1 if   Wall_code == 2
+
+gen walls_cement = 0
+replace walls_cement=1 if   Wall_code == 3 
+/*
+
+Water_code
+ state water company |        232        9.35        9.35
+   ground water/well |      1,682       67.82       77.18
+               river |         61        2.46       79.64
+           lake/pond |         24        0.97       80.60
+          rain water |         13        0.52       81.13
+    refillable water |        468       18.87      100.00
+
+
+>            1 state water company
+>            2 ground water/well
+>            3 river
+>            4 lake/pond
+>            5 rain water
+>            6 refillable water
+>            7 other......
+*/
+tab I_SourceDrinkingWater_code
+
+gen h2o_drinking_piped = 0
+replace h2o_drinking_piped = 1 if I_SourceDrinkingWater_code == 1
+
+gen h2o_drinking_well = 0
+replace h2o_drinking_well=1 if   I_SourceDrinkingWater_code == 2
+
+gen h2o_drinking_river = 0
+replace h2o_drinking_river=1 if   I_SourceDrinkingWater_code == 3 
+
+gen h2o_drinking_lake = 0
+replace h2o_drinking_lake =1 if   I_SourceDrinkingWater_code == 4 
+
+gen h2o_drinking_rain = 0
+replace h2o_drinking_rain=1 if   I_SourceDrinkingWater_code == 5
+
+gen h2o_drinking_refill = 0
+replace h2o_drinking_refill=1 if   I_SourceDrinkingWater_code == 6 
+
+// cooking fuel //////////////////////////////////////////////////////////////
+/*
+I_Energy_cooking
+
+       Wood |      1,126       45.68       45.68
+        LPG |      1,339       54.32      100.00
+I_Energy_cooking:
+           1 Wood
+           2 Benzene
+           3 Kerosene
+           4 LPG
+           5 Coal
+           6 Electricity
+ */
+tab I_Energy_cooking
+
+gen cooking_fuel_lpg = 0
+replace cooking_fuel_lpg = 1 if I_Energy_cooking == 4
+
+gen cooking_fuel_wood = 0
+replace cooking_fuel_wood=1 if   I_Energy_cooking == 1
+
+gen kitchen_separate = 0
+replace kitchen_separate=1 if I_Kitchen_inside == 1
+
+//4.2: Standardize the survey variables by national survey means and standard deviations
+// 
+/*
+Summary statistics of the variables
+
+  -------------------------------------------------------------------
+      Variable |         Mean      Std. Dev.         Min          Max
+  -------------+-----------------------------------------------------
+  hh_educ_pr~l |      .079588      .2706579            0            1
+  hh_educ_pr~y |     .4536708      .4978558            0            1
+  hh_educ_se~y |      .369453      .4826633            0            1
+  hh_educ_hi~r |     .0951909      .2934825            0            1
+      landline |     .3475468      .4761977            0            1
+     cellphone |     .8411257      .3655638            0            1
+         radio |     .3475468      .4761977            0            1
+       bicycle |     .4368129      .4959981            0            1
+           car |     .0928763      .2902629            0            1
+    motorcycle |     .6862896      .2902629            0            1
+  refrigerator |     .4300639      .4950915            0            1
+    floor_soil |     .0765381      .2658607            0            1
+    floor_wood |     .1149639      .3189827            0            1
+  floor_cement |     .2975908      .4572048            0            1
+  floor_porc~n |     .4975767      .5000009            0            1
+     roof_wood |     .0093767      .0963798            0            1
+  roof_asbes~s |     .0757777      .2646457            0            1
+    roof_metal |     .2582328      .4376686            0            1
+     roof_tile |     .6107706      .4875821            0            1
+  walls_bamboo |     .0809161      .2727099            0            1
+    walls_wood |     .2038194      .4028418            0            1
+  h2o_drinki~d |     .1279926      .3340862            0            1
+  h2o_drin~ell |     .4304862       .495151            0            1
+  h2o_drinki~r |     .0210149      .1434359            0            1
+  h2o_drinki~e |     .0003772      .0194183            0            1
+  h2o_drinki~n |     .0277269      .1641916            0            1
+  h2o_drin~ill |      .2820401      .4499989             0            1
+  cooking_fu~g |     .5638552      .4959125            0            1
+  cooking_fu~d |     .3469471      .4760052            0            1
+  kitchen_se~e |      .772563      .4191828            0            1
+*/ 
+// var2= (var-mean)/SD
+gen hh_educ_preschool2 = (hh_educ_preschool - 0.079588)/0.2706579
+gen hh_educ_primary2 = (hh_educ_primary - 0.4536708)/0.4978558
+gen hh_educ_secondary2 = (hh_educ_secondary - 0.369453)/0.4826633
+gen hh_educ_higher2 = (hh_educ_higher - 0.0951909)/0.2934825
+gen landline2 = (landline - 0.3475468)/0.4761977
+gen cellphone2 = (cellphone - 0.8411257)/0.3655638
+gen radio2 = (radio - 0.3475468)/0.4761977
+gen bicycle2 = (bicycle - 0.4368129)/0.4959981
+gen car2 = (car - 0.0928763)/0.2902629
+gen motorcycle2 = (motorcycle - 0.6862896)/0.2902629
+gen refrigerator2 = (refrigerator - 0.4300639)/0.4950915
+
+gen floor_soil2 = (floor_soil - 0.0765381)/0.2658607
+gen floor_wood2 = (floor_wood - 0.1149639)/0.3189827
+gen floor_cement2 = (floor_cement - 0.2975908)/0.4572048
+gen floor_porcelain2 = (floor_porcelain - 0.4975767)/0.5000009
+
+gen roof_wood2 = (roof_wood - 0.0093767)/0.0963798
+gen roof_asbestos2 = (roof_asbestos - 0.0757777)/0.2646457
+gen roof_metal2 = (roof_metal - 0.2582328)/0.4376686
+gen roof_tile2 = (roof_tile - 0.6107706)/0.4875821
+
+gen walls_bamboo2 = (walls_bamboo - 0.0809161)/0.2727099
+gen walls_wood2 = (walls_wood - 0.2038194)/0.4028418
+
+gen h2o_drinking_piped2 = (h2o_drinking_piped - 0.1279926)/0.3340862
+gen h2o_drinking_well2 = (h2o_drinking_well - 0.4304862)/0.495151
+gen h2o_drinking_river2 = (h2o_drinking_river - 0.0210149)/0.1434359
+gen h2o_drinking_lake2 = (h2o_drinking_lake - 0.0003772)/0.0194183
+gen h2o_drinking_rain2  = (h2o_drinking_rain - 0.0277269)/0.1641916
+gen h2o_drinking_refill2 = (h2o_drinking_refill - 0.2820401)/0.4499989
+
+gen cooking_fuel_lpg2 = (cooking_fuel_lpg - 0.5638552)/0.4959125
+gen cooking_fuel_wood2 = (cooking_fuel_wood - 0.3469471)/0.4760052
+gen kitchen_separate2 = (kitchen_separate - 0.772563)/0.4191828
+
+
+//4.3: Apply factor weights
+/*
+						
+ ------------------------------
+    hh_educ_pr~l |  -0.1286   
+    hh_educ_pr~y |  -0.1968   
+    hh_educ_se~y |   0.1681   
+    hh_educ_hi~r |   0.1776   
+        landline |   0.1858   
+       cellphone |   0.2349    
+           radio |   0.1858   
+         bicycle |   0.1282   
+             car |   0.1817   
+      motorcycle |   0.2382   
+    refrigerator |   0.3088   
+      floor_soil |  -0.1461   
+      floor_wood |  -0.1559   
+    floor_cement |  -0.1317    
+    floor_porc~n |   0.3111   
+       roof_wood |  -0.0329   
+    roof_asbes~s |   0.0787    
+      roof_metal |  -0.0887    
+       roof_tile |   0.0640   
+    walls_bamboo |  -0.1540 
+      walls_wood |  -0.1891   
+    h2o_drinki~d |   0.0602   
+    h2o_drin~ell |  -0.1374   
+    h2o_drinki~r |  -0.0985   
+    h2o_drinki~e |  -0.0075   
+    h2o_drinki~n |  -0.0663   
+    h2o_drin~ill |   0.2306    
+    cooking_fu~g |   0.3340   
+    cooking_fu~d |  -0.3418   
+    kitchen_se~e |   0.0491   
+    ---------------------------
+*/
+
+// var3 = var2 * Comp1
+gen hh_educ_preschool3 = hh_educ_preschool2* -0.1286
+gen hh_educ_primary3 = hh_educ_primary2* -0.1968
+gen hh_educ_secondary3 = hh_educ_secondary2* 0.1681
+gen hh_educ_higher3 = hh_educ_higher2* 0.1776    
+
+gen landline3 = landline2*  0.1858 
+gen cellphone3 = cellphone2* 0.2349 
+gen radio3 = radio2* 0.1880  
+gen bicycle3 = bicycle2* 0.1282
+gen car3 = car2* 0.1817 
+gen motorcycle3 = motorcycle2* 0.2382 
+gen refrigerator3 = refrigerator2* 0.3088   
+
+gen floor_soil3 = floor_soil2* -0.1461
+gen floor_wood3 = floor_wood2* -0.1559
+gen floor_cement3 = floor_cement2* -0.1317	
+gen floor_porcelain3 = floor_porcelain2* 0.3111   
+
+gen roof_wood3 = roof_wood2* -0.0326
+gen roof_asbestos3 = roof_asbestos2*  0.0367 
+gen roof_metal3 = roof_metal2*  -0.0886    
+gen roof_tile3 =roof_tile2*  0.0715
+
+gen walls_bamboo3 = walls_bamboo2*  -0.1541
+gen walls_wood3 = walls_wood2*   -0.1903   
+
+gen h2o_drinking_piped3 = h2o_drinking_piped2*  0.0603   
+gen h2o_drinking_well3 = h2o_drinking_well2* -0.1368
+gen h2o_drinking_river3 = h2o_drinking_river2*-0.0993
+gen h2o_drinking_lake3 = h2o_drinking_lake2* -0.0077 
+gen h2o_drinking_rain3  = h2o_drinking_rain2* -0.0669 
+gen h2o_drinking_refill3 = h2o_drinking_refill2* 0.2306 
+
+gen cooking_fuel_lpg3 = cooking_fuel_lpg2* 0.3347   
+gen cooking_fuel_wood3 = cooking_fuel_wood2* -0.3417  
+gen kitchen_separate3 = kitchen_separate2* 0.0496
+
+gen wealthscore = hh_educ_preschool3+hh_educ_primary3+hh_educ_secondary3+hh_educ_higher3+landline3+cellphone3+radio3+bicycle3 ///
++car3+motorcycle3+refrigerator3+floor_soil3+floor_wood3+floor_cement3+floor_porcelain3+roof_wood3+roof_wood3+roof_metal3+roof_tile3 ///
++walls_bamboo3+walls_wood3+h2o_drinking_piped3+h2o_drinking_well3+h2o_drinking_river3+h2o_drinking_lake3+h2o_drinking_rain3 ///
++h2o_drinking_refill3+cooking_fuel_lpg3+cooking_fuel_wood3+kitchen_separate3
+*/
+
+// plot of distribution
+histogram wealthscore
+
+/*This creates a variable called ‘quintile’ where each respondent is given a value from 1 to 5, where 1
+is the poorest quintile and 5 is the wealthiest. Values from DHS national data*/
+
+generate QUINTILE = .
+// hard coded values for quintiles for DHS population data - obtained above
+/*
+
+
+    Variable |        Obs        Mean    Std. Dev.       Min        Max
+-------------+---------------------------------------------------------
+ wealthscore |      7,333   -3.305279    .5896704  -5.037792  -2.427749
+
+. summ wealthscore if quintile ==2
+
+    Variable |        Obs        Mean    Std. Dev.       Min        Max
+-------------+---------------------------------------------------------
+ wealthscore |      7,335   -1.684611    .4212405  -2.427703  -.9635898
+
+. summ wealthscore if quintile ==3
+
+    Variable |        Obs        Mean    Std. Dev.       Min        Max
+-------------+---------------------------------------------------------
+ wealthscore |      7,336   -.2576178    .4044813  -.9627419    .426176
+
+. summ wealthscore if quintile ==4
+
+    Variable |        Obs        Mean    Std. Dev.       Min        Max
+-------------+---------------------------------------------------------
+ wealthscore |      7,340    1.119719    .4059515   .4276688    1.83049
+
+. summ wealthscore if quintile ==5
+
+    Variable |        Obs        Mean    Std. Dev.       Min        Max
+-------------+---------------------------------------------------------
+ wealthscore |      7,318    2.740521    .6278861   1.831285   4.533116
+
+ 
+*/
+replace QUINTILE = .
+replace QUINTILE = 1 if wealthscore< -2.419004 
+replace QUINTILE = 2 if wealthscore < -.9667016  & wealthscore>=-2.419004
+replace QUINTILE = 3 if wealthscore< .4221491 & wealthscore>= -.9667016 
+replace QUINTILE = 4 if wealthscore< 1.834314 & wealthscore>=.4221491 
+replace QUINTILE = 5 if wealthscore>= 1.834314
+summ wealthscore if QUINTILE ==1
+summ wealthscore if QUINTILE ==2
+summ wealthscore if QUINTILE ==3
+summ wealthscore if QUINTILE ==4
+summ wealthscore if QUINTILE ==5
+label define quintile 1 "Poorest" 2 "Poor" 3 "Medium" 4 "Wealthy" 5 "Wealthiest"
+label values QUINTILE quintile	
+histogram QUINTILE, discrete
+histogram wealthscore
+sort id_hh
+duplicates list id_hh
+
+
+// just keep wealthscore and household id for later merging
+keep id_hh wealthscore povertyscore QUINTILE
+
+save "$path\data\Household_SE_score.dta" ,replace
+sum wealthscore
+
+merge 1:m id_hh using "$path\data\@@@@@.dta"
+
+save "@@@@@", replace
+
+
+
